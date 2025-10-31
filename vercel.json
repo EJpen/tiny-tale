@@ -4,5 +4,5 @@
       "maxDuration": 30
     }
   },
-  "buildCommand": "prisma generate && next build"
+  "buildCommand": "prisma generate && next build --turbopack"
 }
