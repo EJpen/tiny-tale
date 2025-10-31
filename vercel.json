@@ -4,5 +4,6 @@
       "maxDuration": 30
     }
   },
-  "buildCommand": "prisma generate && next build --turbopack"
+  "buildCommand": "./scripts/build.sh",
+  "installCommand": "npm install && npx prisma generate"
 }

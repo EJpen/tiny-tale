@@ -37,13 +37,6 @@ export const getUserById = async (id: string) => {
 
 export const createUser = async (username: string) => {
   try {
-    console.log("🔍 Creating user with username:", username);
-    console.log("🔍 DATABASE_URL exists:", !!process.env.DATABASE_URL);
-    console.log(
-      "🔍 DATABASE_URL (first 50 chars):",
-      process.env.DATABASE_URL?.substring(0, 50)
-    );
-
     // Check if username already exists
     const existingUser = await prisma.user.findUnique({
       where: { username },
