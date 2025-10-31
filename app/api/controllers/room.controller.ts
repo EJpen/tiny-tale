@@ -140,6 +140,8 @@ export const createRoom = async (data: {
     });
 
     const baseUrl = process.env.APP_URL || "http://localhost:3000";
+    console.log("🔍 Environment APP_URL:", process.env.APP_URL);
+    console.log("🔍 Using baseUrl:", baseUrl);
     const roomUrl = `${baseUrl}/room/${room.id}`;
 
     // Remove sensitive hashes before sending
