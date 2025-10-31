@@ -76,7 +76,7 @@ Tiny Tale is an interactive web application designed to make gender reveal parti
 ### Step 1: Clone the Repository
 
 ```bash
-git clone https://github.com/yourusername/tiny-tale.git
+git clone https://github.com/EJpen/tiny-tale
 cd tiny-tale
 ```
 
