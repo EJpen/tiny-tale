@@ -1,15 +1,32 @@
-import { prisma } from "../core/services/prisma.service";
+import { supabaseAdmin } from "../../../lib/supabase-admin";
 import { ResponseService } from "../core/services/response.service";
-import { paginate } from "../core/services/pagination.service";
 
 export const getUsers = async (page?: number, limit?: number) => {
   try {
-    const result = await paginate({
-      model: prisma.user,
-      page,
-      limit,
-      orderBy: { createdAt: "desc" },
-    });
+    const pageSize = limit || 10;
+    const from = ((page || 1) - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    const { data, error, count } = await supabaseAdmin
+      .from("users")
+      .select("*", { count: "exact" })
+      .order("createdAt", { ascending: false })
+      .range(from, to);
+
+    if (error) {
+      console.error("Supabase error:", error);
+      return ResponseService.error("Failed to fetch users");
+    }
+
+    const result = {
+      data,
+      pagination: {
+        total: count || 0,
+        page: page || 1,
+        limit: pageSize,
+        totalPages: Math.ceil((count || 0) / pageSize),
+      },
+    };
 
     return ResponseService.success(result, "Users fetched successfully");
   } catch (error) {
@@ -20,11 +37,13 @@ export const getUsers = async (page?: number, limit?: number) => {
 
 export const getUserById = async (id: string) => {
   try {
-    const user = await prisma.user.findUnique({
-      where: { id },
-    });
+    const { data: user, error } = await supabaseAdmin
+      .from("users")
+      .select("*")
+      .eq("id", id)
+      .single();
 
-    if (!user) {
+    if (error || !user) {
       return ResponseService.notFound("User");
     }
 
@@ -38,36 +57,42 @@ export const getUserById = async (id: string) => {
 export const createUser = async (username: string) => {
   try {
     // Check if username already exists
-    const existingUser = await prisma.user.findUnique({
-      where: { username },
-    });
+    const { data: existingUser } = await supabaseAdmin
+      .from("users")
+      .select("id")
+      .eq("username", username)
+      .single();
 
     if (existingUser) {
       return ResponseService.conflict("Username already exists");
     }
 
-    const user = await prisma.user.create({
-      data: { username },
-    });
+    const { data: user, error } = await supabaseAdmin
+      .from("users")
+      .insert({ username })
+      .select()
+      .single();
+
+    if (error) {
+      console.error("❌ Supabase error creating user:", error);
+      return ResponseService.error("Failed to create user");
+    }
 
     console.log("✅ User created successfully:", user.id);
     return ResponseService.success(user, "User created successfully", 201);
   } catch (error) {
     console.error("❌ Error creating user:", error);
-    console.error("❌ Error details:", {
-      name: (error as any)?.name,
-      message: (error as any)?.message,
-      code: (error as any)?.code,
-    });
     return ResponseService.error("Failed to create user");
   }
 };
 
 export const updateUser = async (id: string, data: { username?: string }) => {
   try {
-    const existingUser = await prisma.user.findUnique({
-      where: { id },
-    });
+    const { data: existingUser } = await supabaseAdmin
+      .from("users")
+      .select("*")
+      .eq("id", id)
+      .single();
 
     if (!existingUser) {
       return ResponseService.notFound("User");
@@ -75,19 +100,28 @@ export const updateUser = async (id: string, data: { username?: string }) => {
 
     // Check if new username already exists (if username is being updated)
     if (data.username && data.username !== existingUser.username) {
-      const duplicateUser = await prisma.user.findUnique({
-        where: { username: data.username },
-      });
+      const { data: duplicateUser } = await supabaseAdmin
+        .from("users")
+        .select("id")
+        .eq("username", data.username)
+        .single();
 
       if (duplicateUser) {
         return ResponseService.conflict("Username already exists");
       }
     }
 
-    const user = await prisma.user.update({
-      where: { id },
-      data,
-    });
+    const { data: user, error } = await supabaseAdmin
+      .from("users")
+      .update(data)
+      .eq("id", id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error("Supabase error updating user:", error);
+      return ResponseService.error("Failed to update user");
+    }
 
     return ResponseService.success(user, "User updated successfully");
   } catch (error) {
@@ -95,25 +129,3 @@ export const updateUser = async (id: string, data: { username?: string }) => {
     return ResponseService.error("Failed to update user");
   }
 };
-
-//wip:
-// export const deleteUser = async (id: string) => {
-//   try {
-//     const existingUser = await prisma.user.findUnique({
-//       where: { id },
-//     });
-
-//     if (!existingUser) {
-//       return ResponseService.notFound("User");
-//     }
-
-//     await prisma.user.delete({
-//       where: { id },
-//     });
-
-//     return ResponseService.success(null, "User deleted successfully");
-//   } catch (error) {
-//     console.error("Error deleting user:", error);
-//     return ResponseService.error("Failed to delete user");
-//   }
-// };

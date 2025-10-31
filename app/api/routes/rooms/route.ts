@@ -20,6 +20,8 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    console.log("🔍 Raw request body:", body);
+
     const validation = validateRequest<{
       trusteeId: string;
       roomName: string;
@@ -27,11 +29,14 @@ export async function POST(request: NextRequest) {
     }>(createRoomSchema, body);
 
     if (!validation.isValid) {
+      console.log("🚨 Validation failed:", validation.errors);
       return ResponseService.badRequest(validation.errors);
     }
 
+    console.log("🔍 Validated data:", validation.data);
     return await createRoom(validation.data!);
   } catch (error) {
+    console.error("🚨 Error in POST handler:", error);
     return ResponseService.error("Invalid JSON in request body");
   }
 }

@@ -4,6 +4,6 @@
       "maxDuration": 30
     }
   },
-  "buildCommand": "bun install && bunx prisma generate && bun run build:next",
+  "buildCommand": "bun install && bun run build",
   "installCommand": "bun install"
 }
