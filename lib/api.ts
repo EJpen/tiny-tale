@@ -1,4 +1,7 @@
-const API_BASE_URL = process.env.APP_URL || "";
+const API_BASE_URL =
+  typeof window !== "undefined"
+    ? window.location.origin
+    : process.env.APP_URL || "http://localhost:3000";
 
 // API Types
 export interface User {

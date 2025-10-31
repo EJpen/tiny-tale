@@ -1,26 +1,64 @@
-import { prisma } from "../core/services/prisma.service";
+import { supabaseAdmin } from "../../../lib/supabase-admin";
 import { ResponseService } from "../core/services/response.service";
 import crypto from "crypto";
 
+// Simple UUID v4 generator
+function generateUUID() {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c == "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export const getRooms = async () => {
   try {
-    const rooms = await prisma.room.findMany({
-      select: {
-        id: true,
-        roomName: true,
-        trustee: {
-          select: { id: true, username: true },
-        },
-        _count: {
-          select: { votes: true },
-        },
-        createdAt: true,
-        updatedAt: true,
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    const { data: rooms, error } = await supabaseAdmin
+      .from("rooms")
+      .select(
+        `
+        id,
+        roomName,
+        createdAt,
+        updatedAt,
+        trusteeId
+      `
+      )
+      .order("createdAt", { ascending: false });
 
-    return ResponseService.success(rooms, "Rooms fetched successfully");
+    if (error) {
+      console.error("Supabase error:", error);
+      return ResponseService.error("Failed to fetch rooms");
+    }
+
+    // Get trustee info and vote counts separately
+    const roomsWithDetails = await Promise.all(
+      (rooms || []).map(async (room) => {
+        // Get trustee info
+        const { data: trustee } = await supabaseAdmin
+          .from("users")
+          .select("id, username")
+          .eq("id", room.trusteeId)
+          .single();
+
+        // Get vote count
+        const { count } = await supabaseAdmin
+          .from("votes")
+          .select("*", { count: "exact", head: true })
+          .eq("roomId", room.id);
+
+        return {
+          ...room,
+          trustee,
+          _count: { votes: count || 0 },
+        };
+      })
+    );
+
+    return ResponseService.success(
+      roomsWithDetails,
+      "Rooms fetched successfully"
+    );
   } catch (error) {
     console.error("Error fetching rooms:", error);
     return ResponseService.error("Failed to fetch rooms");
@@ -29,29 +67,49 @@ export const getRooms = async () => {
 
 export const getRoomById = async (id: string) => {
   try {
-    const room = await prisma.room.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        roomName: true,
-        gender: true,
-        isClose: true,
-        trustee: {
-          select: { id: true, username: true },
-        },
-        _count: {
-          select: { votes: true },
-        },
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    const { data: room, error } = await supabaseAdmin
+      .from("rooms")
+      .select(
+        `
+        id,
+        roomName,
+        gender,
+        isClose,
+        createdAt,
+        updatedAt,
+        trusteeId
+      `
+      )
+      .eq("id", id)
+      .single();
 
-    if (!room) {
+    if (error || !room) {
       return ResponseService.notFound("Room");
     }
 
-    return ResponseService.success(room, "Room fetched successfully");
+    // Get trustee info separately
+    const { data: trustee } = await supabaseAdmin
+      .from("users")
+      .select("id, username")
+      .eq("id", room.trusteeId)
+      .single();
+
+    // Get vote count
+    const { count } = await supabaseAdmin
+      .from("votes")
+      .select("*", { count: "exact", head: true })
+      .eq("roomId", id);
+
+    const transformedRoom = {
+      ...room,
+      trustee,
+      _count: { votes: count || 0 },
+    };
+
+    return ResponseService.success(
+      transformedRoom,
+      "Room fetched successfully"
+    );
   } catch (error) {
     console.error("Error fetching room:", error);
     return ResponseService.error("Failed to fetch room");
@@ -60,29 +118,48 @@ export const getRoomById = async (id: string) => {
 
 export const getRoomByIdPublic = async (id: string) => {
   try {
-    const room = await prisma.room.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        roomName: true,
-        isClose: true,
-        // Exclude gender from public response
-        trustee: {
-          select: { id: true, username: true },
-        },
-        _count: {
-          select: { votes: true },
-        },
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    const { data: room, error } = await supabaseAdmin
+      .from("rooms")
+      .select(
+        `
+        id,
+        roomName,
+        isClose,
+        createdAt,
+        updatedAt,
+        trusteeId
+      `
+      )
+      .eq("id", id)
+      .single();
 
-    if (!room) {
+    if (error || !room) {
       return ResponseService.notFound("Room");
     }
 
-    return ResponseService.success(room, "Room fetched successfully");
+    // Get trustee info separately
+    const { data: trustee } = await supabaseAdmin
+      .from("users")
+      .select("id, username")
+      .eq("id", room.trusteeId)
+      .single();
+
+    // Get vote count
+    const { count } = await supabaseAdmin
+      .from("votes")
+      .select("*", { count: "exact", head: true })
+      .eq("roomId", id);
+
+    const transformedRoom = {
+      ...room,
+      trustee,
+      _count: { votes: count || 0 },
+    };
+
+    return ResponseService.success(
+      transformedRoom,
+      "Room fetched successfully"
+    );
   } catch (error) {
     console.error("Error fetching room:", error);
     return ResponseService.error("Failed to fetch room");
@@ -97,24 +174,18 @@ export const createRoom = async (data: {
   try {
     const { trusteeId, roomName, gender } = data;
 
-    // Check if trustee exists
-    const trustee = await prisma.user.findUnique({
-      where: { id: trusteeId },
-    });
-
-    if (!trustee) {
-      return ResponseService.notFound("Trustee");
-    }
-
     // Check if room name already exists
-    const existingRoom = await prisma.room.findFirst({
-      where: { roomName },
-    });
+    const { data: existingRoom } = await supabaseAdmin
+      .from("rooms")
+      .select("id")
+      .eq("roomName", roomName)
+      .single();
 
     if (existingRoom) {
       return ResponseService.conflict("Room name already exists");
     }
 
+    // Generate PINs
     const randOwnerPin = Math.floor(1000 + Math.random() * 9000).toString();
     const randMemberPin = Math.floor(1000 + Math.random() * 9000).toString();
 
@@ -124,31 +195,50 @@ export const createRoom = async (data: {
     const ownerPinHash = hash(randOwnerPin);
     const memberPinHash = hash(randMemberPin);
 
-    const room = await prisma.room.create({
-      data: {
+    // Create the room
+    const roomId = generateUUID();
+    const { data: room, error } = await supabaseAdmin
+      .from("rooms")
+      .insert({
+        id: roomId,
         trusteeId,
         roomName,
         gender,
         ownerPin: ownerPinHash,
         memberPin: memberPinHash,
-      },
-      include: {
-        trustee: {
-          select: { id: true, username: true },
-        },
-      },
-    });
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      })
+      .select(
+        `
+        id,
+        roomName,
+        gender,
+        createdAt,
+        updatedAt,
+        trusteeId
+      `
+      )
+      .single();
+
+    if (error) {
+      console.error("Failed to create room:", error);
+      return ResponseService.error("Failed to create room");
+    }
+
+    // Get trustee info
+    const { data: trustee } = await supabaseAdmin
+      .from("users")
+      .select("id, username")
+      .eq("id", trusteeId)
+      .single();
 
     const baseUrl = process.env.APP_URL || "http://localhost:3000";
-    console.log("🔍 Environment APP_URL:", process.env.APP_URL);
-    console.log("🔍 Using baseUrl:", baseUrl);
     const roomUrl = `${baseUrl}/room/${room.id}`;
 
-    // Remove sensitive hashes before sending
-    const { ownerPin: _1, memberPin: _2, ...safeRoom } = room;
-
     const responseData = {
-      ...safeRoom,
+      ...room,
+      trustee,
       roomUrl,
       ownerPin: randOwnerPin,
       memberPin: randMemberPin,
@@ -170,18 +260,22 @@ export const updateRoom = async (
   data: { trusteeId?: string; roomName?: string; gender?: string }
 ) => {
   try {
-    const existingRoom = await prisma.room.findUnique({
-      where: { id },
-    });
+    const { data: existingRoom } = await supabaseAdmin
+      .from("rooms")
+      .select("*")
+      .eq("id", id)
+      .single();
 
     if (!existingRoom) {
       return ResponseService.notFound("Room");
     }
 
     if (data.trusteeId) {
-      const trustee = await prisma.user.findUnique({
-        where: { id: data.trusteeId },
-      });
+      const { data: trustee } = await supabaseAdmin
+        .from("users")
+        .select("id")
+        .eq("id", data.trusteeId)
+        .single();
 
       if (!trustee) {
         return ResponseService.notFound("Trustee");
@@ -189,34 +283,61 @@ export const updateRoom = async (
     }
 
     if (data.roomName && data.roomName !== existingRoom.roomName) {
-      const duplicateRoom = await prisma.room.findFirst({
-        where: { roomName: data.roomName },
-      });
+      const { data: duplicateRoom } = await supabaseAdmin
+        .from("rooms")
+        .select("id")
+        .eq("roomName", data.roomName)
+        .single();
 
       if (duplicateRoom) {
         return ResponseService.conflict("Room name already exists");
       }
     }
 
-    const room = await prisma.room.update({
-      where: { id },
-      data,
-      select: {
-        id: true,
-        roomName: true,
-        isClose: true,
-        trustee: {
-          select: { id: true, username: true },
-        },
-        _count: {
-          select: { votes: true },
-        },
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    const { data: room, error } = await supabaseAdmin
+      .from("rooms")
+      .update(data)
+      .eq("id", id)
+      .select(
+        `
+        id,
+        roomName,
+        isClose,
+        createdAt,
+        updatedAt,
+        trusteeId
+      `
+      )
+      .single();
 
-    return ResponseService.success(room, "Room updated successfully");
+    if (error) {
+      console.error("Supabase error updating room:", error);
+      return ResponseService.error("Failed to update room");
+    }
+
+    // Get trustee info separately
+    const { data: updateTrustee } = await supabaseAdmin
+      .from("users")
+      .select("id, username")
+      .eq("id", room.trusteeId)
+      .single();
+
+    // Get vote count
+    const { count } = await supabaseAdmin
+      .from("votes")
+      .select("*", { count: "exact", head: true })
+      .eq("roomId", id);
+
+    const transformedRoom = {
+      ...room,
+      trustee: updateTrustee,
+      _count: { votes: count || 0 },
+    };
+
+    return ResponseService.success(
+      transformedRoom,
+      "Room updated successfully"
+    );
   } catch (error) {
     console.error("Error updating room:", error);
     return ResponseService.error("Failed to update room");
@@ -225,25 +346,35 @@ export const updateRoom = async (
 
 export const closeRoom = async (id: string, data: { isClose?: boolean }) => {
   try {
-    const existingRoom = await prisma.room.findUnique({
-      where: { id },
-    });
+    const { data: existingRoom } = await supabaseAdmin
+      .from("rooms")
+      .select("id")
+      .eq("id", id)
+      .single();
 
     if (!existingRoom) {
       return ResponseService.notFound("Room");
     }
 
-    const room = await prisma.room.update({
-      where: { id },
-      data,
-      select: {
-        id: true,
-        roomName: true,
-        isClose: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    const { data: room, error } = await supabaseAdmin
+      .from("rooms")
+      .update(data)
+      .eq("id", id)
+      .select(
+        `
+        id,
+        roomName,
+        isClose,
+        createdAt,
+        updatedAt
+      `
+      )
+      .single();
+
+    if (error) {
+      console.error("Supabase error updating room status:", error);
+      return ResponseService.error("Failed to update room status");
+    }
 
     return ResponseService.success(room, "Room status updated successfully");
   } catch (error) {
@@ -254,17 +385,22 @@ export const closeRoom = async (id: string, data: { isClose?: boolean }) => {
 
 export const deleteRoom = async (id: string) => {
   try {
-    const existingRoom = await prisma.room.findUnique({
-      where: { id },
-    });
+    const { data: existingRoom } = await supabaseAdmin
+      .from("rooms")
+      .select("id")
+      .eq("id", id)
+      .single();
 
     if (!existingRoom) {
       return ResponseService.notFound("Room");
     }
 
-    await prisma.room.delete({
-      where: { id },
-    });
+    const { error } = await supabaseAdmin.from("rooms").delete().eq("id", id);
+
+    if (error) {
+      console.error("Supabase error deleting room:", error);
+      return ResponseService.error("Failed to delete room");
+    }
 
     return ResponseService.success(null, "Room deleted successfully");
   } catch (error) {

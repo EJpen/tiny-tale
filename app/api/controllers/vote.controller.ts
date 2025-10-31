@@ -1,4 +1,4 @@
-import { prisma } from "../core/services/prisma.service";
+import { supabaseAdmin } from "../../../lib/supabase-admin";
 import { ResponseService } from "../core/services/response.service";
 import { broadcastToRoom, PUSHER_EVENTS } from "../../../lib/pusher";
 
@@ -9,21 +9,32 @@ export const getVotes = async (filters?: {
   isOut?: boolean;
 }) => {
   try {
-    const where: any = {};
-    if (filters?.roomId) where.roomId = filters.roomId;
-    if (filters?.name) where.name = filters.name;
-    if (filters?.gender) where.gender = filters.gender;
-    if (filters?.isOut !== undefined) where.isOut = filters.isOut;
+    let query = supabaseAdmin
+      .from("votes")
+      .select(
+        `
+        id,
+        roomId,
+        name,
+        gender,
+        isOut,
+        createdAt,
+        updatedAt
+      `
+      )
+      .order("createdAt", { ascending: false });
 
-    const votes = await prisma.vote.findMany({
-      where,
-      include: {
-        room: {
-          select: { id: true, roomName: true },
-        },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+    if (filters?.roomId) query = query.eq("roomId", filters.roomId);
+    if (filters?.name) query = query.eq("name", filters.name);
+    if (filters?.gender) query = query.eq("gender", filters.gender);
+    if (filters?.isOut !== undefined) query = query.eq("isOut", filters.isOut);
+
+    const { data: votes, error } = await query;
+
+    if (error) {
+      console.error("Supabase error:", error);
+      return ResponseService.error("Failed to fetch votes");
+    }
 
     return ResponseService.success(votes, "Votes fetched successfully");
   } catch (error) {
@@ -34,16 +45,18 @@ export const getVotes = async (filters?: {
 
 export const getVoteById = async (id: string) => {
   try {
-    const vote = await prisma.vote.findUnique({
-      where: { id },
-      include: {
-        room: {
-          select: { id: true, roomName: true },
-        },
-      },
-    });
+    const { data: vote, error } = await supabaseAdmin
+      .from("votes")
+      .select(
+        `
+        *,
+        room:rooms!roomId(id, roomName)
+      `
+      )
+      .eq("id", id)
+      .single();
 
-    if (!vote) {
+    if (error || !vote) {
       return ResponseService.notFound("Vote");
     }
 
@@ -64,25 +77,25 @@ export const createVote = async (data: {
     const { roomId, name, gender, isOut } = data;
 
     // Check if room exists
-    const room = await prisma.room.findUnique({
-      where: { id: roomId },
-    });
+    const { data: room } = await supabaseAdmin
+      .from("rooms")
+      .select("id, isClose")
+      .eq("id", roomId)
+      .single();
 
     if (!room) {
       return ResponseService.notFound("Room");
     }
 
     // Check if name already voted in this room
-    const existingVote = await prisma.vote.findFirst({
-      where: {
-        roomId,
-        name,
-      },
-    });
+    const { data: existingVote } = await supabaseAdmin
+      .from("votes")
+      .select("id")
+      .eq("roomId", roomId)
+      .eq("name", name)
+      .single();
 
-    const isClose = room.isClose;
-
-    if (isClose) {
+    if (room.isClose) {
       return ResponseService.conflict("Room is closed for voting");
     }
 
@@ -92,19 +105,26 @@ export const createVote = async (data: {
       );
     }
 
-    const vote = await prisma.vote.create({
-      data: {
+    const { data: vote, error } = await supabaseAdmin
+      .from("votes")
+      .insert({
         roomId,
         name,
         gender,
         isOut,
-      },
-      include: {
-        room: {
-          select: { id: true, roomName: true },
-        },
-      },
-    });
+      })
+      .select(
+        `
+        *,
+        room:rooms!roomId(id, roomName)
+      `
+      )
+      .single();
+
+    if (error) {
+      console.error("Supabase error creating vote:", error);
+      return ResponseService.error("Failed to create vote");
+    }
 
     // Broadcast new vote to room channel
     const broadcastSuccess = await broadcastToRoom(
@@ -136,9 +156,11 @@ export const updateVote = async (
   data: { roomId?: string; name?: string; gender?: string; isOut?: boolean }
 ) => {
   try {
-    const existingVote = await prisma.vote.findUnique({
-      where: { id },
-    });
+    const { data: existingVote } = await supabaseAdmin
+      .from("votes")
+      .select("*")
+      .eq("id", id)
+      .single();
 
     if (!existingVote) {
       return ResponseService.notFound("Vote");
@@ -146,9 +168,11 @@ export const updateVote = async (
 
     // Check if new room exists (if roomId is being updated)
     if (data.roomId) {
-      const room = await prisma.room.findUnique({
-        where: { id: data.roomId },
-      });
+      const { data: room } = await supabaseAdmin
+        .from("rooms")
+        .select("id")
+        .eq("id", data.roomId)
+        .single();
 
       if (!room) {
         return ResponseService.notFound("Room");
@@ -160,13 +184,13 @@ export const updateVote = async (
       const checkRoomId = data.roomId || existingVote.roomId;
       const checkName = data.name || existingVote.name;
 
-      const duplicateVote = await prisma.vote.findFirst({
-        where: {
-          roomId: checkRoomId,
-          name: checkName,
-          NOT: { id },
-        },
-      });
+      const { data: duplicateVote } = await supabaseAdmin
+        .from("votes")
+        .select("id")
+        .eq("roomId", checkRoomId)
+        .eq("name", checkName)
+        .neq("id", id)
+        .single();
 
       if (duplicateVote) {
         return ResponseService.conflict(
@@ -175,15 +199,22 @@ export const updateVote = async (
       }
     }
 
-    const vote = await prisma.vote.update({
-      where: { id },
-      data,
-      include: {
-        room: {
-          select: { id: true, roomName: true },
-        },
-      },
-    });
+    const { data: vote, error } = await supabaseAdmin
+      .from("votes")
+      .update(data)
+      .eq("id", id)
+      .select(
+        `
+        *,
+        room:rooms!roomId(id, roomName)
+      `
+      )
+      .single();
+
+    if (error) {
+      console.error("Supabase error updating vote:", error);
+      return ResponseService.error("Failed to update vote");
+    }
 
     return ResponseService.success(vote, "Vote updated successfully");
   } catch (error) {
@@ -194,22 +225,27 @@ export const updateVote = async (
 
 export const deleteVote = async (id: string) => {
   try {
-    const existingVote = await prisma.vote.findUnique({
-      where: { id },
-      include: {
-        room: {
-          select: { id: true, roomName: true },
-        },
-      },
-    });
+    const { data: existingVote } = await supabaseAdmin
+      .from("votes")
+      .select(
+        `
+        *,
+        room:rooms!roomId(id, roomName)
+      `
+      )
+      .eq("id", id)
+      .single();
 
     if (!existingVote) {
       return ResponseService.notFound("Vote");
     }
 
-    await prisma.vote.delete({
-      where: { id },
-    });
+    const { error } = await supabaseAdmin.from("votes").delete().eq("id", id);
+
+    if (error) {
+      console.error("Supabase error deleting vote:", error);
+      return ResponseService.error("Failed to delete vote");
+    }
 
     // Broadcast vote deletion to room channel
     const broadcastSuccess = await broadcastToRoom(

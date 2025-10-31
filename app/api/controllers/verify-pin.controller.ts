@@ -1,4 +1,4 @@
-import prisma from "../config/prisma";
+import { supabaseAdmin } from "../../../lib/supabase-admin";
 import { ResponseService } from "../core/services/response.service";
 import crypto from "crypto";
 
@@ -10,16 +10,13 @@ export class VerifyPinController {
     try {
       const { id } = await params;
 
-      const room = await prisma.room.findUnique({
-        where: { id },
-        select: {
-          id: true,
-          ownerPin: true,
-          gender: true,
-        },
-      });
+      const { data: room, error } = await supabaseAdmin
+        .from("rooms")
+        .select("id, ownerPin, gender")
+        .eq("id", id)
+        .single();
 
-      if (!room) {
+      if (error || !room) {
         return ResponseService.notFound("Room");
       }
 
