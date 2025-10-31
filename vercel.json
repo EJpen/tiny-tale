@@ -4,6 +4,6 @@
       "maxDuration": 30
     }
   },
-  "buildCommand": "./scripts/build.sh",
-  "installCommand": "npm install && npx prisma generate"
+  "buildCommand": "bun install && bunx prisma generate && bun run build:next",
+  "installCommand": "bun install"
 }
